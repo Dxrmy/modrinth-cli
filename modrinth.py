@@ -63,13 +63,26 @@ def _request(endpoint, params=None, is_post=False, post_data=None):
                 time.sleep(reset + 1)
                 continue
             if e.code == 404:
-                print(f"Error 404: Not found -> {endpoint}")
-                sys.exit(1)
+                return None
             print(f"HTTP Error {e.code}: {e.read().decode()}")
             sys.exit(1)
         except URLError as e:
             print(f"URL Error: {e.reason}")
             sys.exit(1)
+
+def suggest_mods(query):
+    params = {'query': query, 'limit': 3}
+    url = f"{BASE_URL}/search?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={'User-Agent': 'modrinth-cli (github.com/Dxrmy/modrinth-cli)'})
+    try:
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            if data and data.get('hits'):
+                print(f"\nDid you mean one of these?")
+                for hit in data['hits']:
+                    print(f"  - {hit['slug']} ({hit['title']})")
+    except Exception:
+        pass
 
 def get_file_hash(filepath):
     sha512 = hashlib.sha512()
@@ -130,6 +143,11 @@ def get_primary_file(files):
 def project_info(slug):
     print(f"Fetching info for {slug}...")
     p = _request(f'/project/{slug}')
+    if not p:
+        print(f"Error: Project '{slug}' not found.")
+        suggest_mods(slug)
+        return
+        
     print(f"\n[{p['project_type'].upper()}] {p['title']} ({p['slug']})")
     print(f"ID: {p['id']} | Status: {p['status']}")
     print(f"Downloads: {p['downloads']} | Followers: {p['followers']}")
@@ -150,16 +168,19 @@ def project_info(slug):
 def display_filters(filter_type):
     if filter_type == 'categories':
         data = _request('/tag/category')
+        if not data: return
         print("Available Categories:")
         for item in data:
             print(f" - {item['name']} ({item['project_type']})")
     elif filter_type == 'loaders':
         data = _request('/tag/loader')
+        if not data: return
         print("Available Loaders:")
         for item in data:
             print(f" - {item['name']}")
     elif filter_type == 'versions':
         data = _request('/tag/game_version')
+        if not data: return
         print("Available Game Versions:")
         for item in data:
             print(f" - {item['version']}")
@@ -187,6 +208,7 @@ def search_projects(query, project_type, game_versions, loaders, categories, lim
         params['facets'] = json.dumps(facets)
         
     data = _request('/search', params)
+    if not data: return
     
     print(f"Found {data['total_hits']} results. Showing {len(data['hits'])} results (Offset: {offset}):")
     print("-" * 60)
@@ -218,11 +240,12 @@ def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resol
         print(f"Fetching versions for {slug}...")
         
         # Get project type for smart routing
-        try:
-            p_info = _request(f'/project/{slug}')
-            p_type = p_info['project_type']
-        except Exception:
-            p_type = 'mod'
+        p_info = _request(f'/project/{slug}')
+        if not p_info:
+            print(f"Error: Project '{slug}' not found.")
+            suggest_mods(slug)
+            continue
+        p_type = p_info['project_type']
             
         params = {}
         if loader:
@@ -293,6 +316,11 @@ def list_versions(slug, version=None, loader=None):
         
     versions = _request(f'/project/{slug}/version', params)
     
+    if versions is None:
+        print(f"Error: Project '{slug}' not found.")
+        suggest_mods(slug)
+        return
+        
     if not versions:
         print(f"No versions found matching the criteria for {slug}.")
         return
@@ -309,6 +337,10 @@ def list_versions(slug, version=None, loader=None):
 def download_version(version_id, dest_dir=None, auto_resolve=False):
     print(f"Fetching version info for {version_id}...")
     v = _request(f'/version/{version_id}')
+    if not v:
+        print(f"Error: Version '{version_id}' not found.")
+        return
+        
     file = get_primary_file(v.get('files', []))
     if not file:
         print("No files found in this version.")
@@ -318,11 +350,8 @@ def download_version(version_id, dest_dir=None, auto_resolve=False):
     filename = file['filename']
     file_hash = file.get('hashes', {}).get('sha512')
     
-    try:
-        p_info = _request(f'/project/{v["project_id"]}')
-        p_type = p_info['project_type']
-    except Exception:
-        p_type = 'mod'
+    p_info = _request(f'/project/{v["project_id"]}')
+    p_type = p_info['project_type'] if p_info else 'mod'
         
     routed_dest = get_routed_dest(dest_dir, p_type)
     
@@ -455,12 +484,12 @@ def uninstall_project(slug, directory):
         return
         
     print(f"Fetching project info for '{slug}' to get ID...")
-    try:
-        p = _request(f'/project/{slug}')
-        target_id = p['id']
-    except Exception:
+    p = _request(f'/project/{slug}')
+    if not p:
         print(f"Error: Project '{slug}' not found on Modrinth.")
+        suggest_mods(slug)
         return
+    target_id = p['id']
 
     print(f"Scanning {directory} for installed mods...")
     hashes = []
