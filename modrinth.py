@@ -18,11 +18,34 @@ def _request(endpoint, params=None):
         with urllib.request.urlopen(req) as response:
             return json.loads(response.read().decode())
     except HTTPError as e:
+        if e.code == 404:
+            print(f"Error 404: Not found -> {endpoint}")
+            sys.exit(1)
         print(f"HTTP Error {e.code}: {e.read().decode()}")
         sys.exit(1)
     except URLError as e:
         print(f"URL Error: {e.reason}")
         sys.exit(1)
+
+def project_info(slug):
+    print(f"Fetching info for {slug}...")
+    p = _request(f'/project/{slug}')
+    print(f"\n[{p['project_type'].upper()}] {p['title']} ({p['slug']})")
+    print(f"ID: {p['id']} | Status: {p['status']}")
+    print(f"Downloads: {p['downloads']} | Followers: {p['followers']}")
+    print(f"License: {p.get('license', {}).get('name', 'Unknown')}")
+    print(f"Client: {p.get('client_side', 'unknown')} | Server: {p.get('server_side', 'unknown')}")
+    if p.get('source_url'):
+        print(f"Source: {p['source_url']}")
+    if p.get('issues_url'):
+        print(f"Issues: {p['issues_url']}")
+    if p.get('wiki_url'):
+        print(f"Wiki: {p['wiki_url']}")
+    if p.get('discord_url'):
+        print(f"Discord: {p['discord_url']}")
+    print("-" * 60)
+    print(p.get('description', 'No description provided.'))
+    print("-" * 60)
 
 def display_filters(filter_type):
     if filter_type == 'categories':
@@ -43,7 +66,7 @@ def display_filters(filter_type):
     else:
         print("Unknown filter type. Choose from: categories, loaders, versions")
 
-def search_projects(query, project_type, game_versions, loaders, categories):
+def search_projects(query, project_type, game_versions, loaders, categories, limit, offset):
     facets = []
     
     if project_type:
@@ -57,7 +80,8 @@ def search_projects(query, project_type, game_versions, loaders, categories):
         
     params = {
         'query': query,
-        'limit': 10
+        'limit': limit,
+        'offset': offset
     }
     if facets:
         params['facets'] = json.dumps(facets)
@@ -105,6 +129,12 @@ def download_project(slugs, version=None, loader=None):
         game_versions = latest_version.get('game_versions', [])
         v_loaders = latest_version.get('loaders', [])
         print(f"Selected version: {latest_version['name']} (Versions: {', '.join(game_versions)} | Loaders: {', '.join(v_loaders)})")
+        
+        dependencies = latest_version.get('dependencies', [])
+        required = [d['project_id'] for d in dependencies if d.get('dependency_type') == 'required']
+        if required:
+            print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
+            
         print(f"Downloading {filename}...")
         
         try:
@@ -143,6 +173,12 @@ def download_version(version_id):
     filename = file['filename']
     
     print(f"Downloading {filename}...")
+    
+    dependencies = v.get('dependencies', [])
+    required = [d['project_id'] for d in dependencies if d.get('dependency_type') == 'required']
+    if required:
+        print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
+        
     try:
         urllib.request.urlretrieve(download_url, filename)
         print(f"Successfully downloaded {filename}\n")
@@ -150,9 +186,12 @@ def download_version(version_id):
         print(f"Failed to download {filename}: {e}\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="Modrinth CLI - Interact with the Modrinth API")
+    parser = argparse.ArgumentParser(
+        description="Modrinth CLI - A feature-rich command-line interface for interacting with the Modrinth API.",
+        epilog="Use 'modrinth.py <command> -h' for more information on a specific command."
+    )
     
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
+    subparsers = parser.add_subparsers(dest="command", help="Available Commands")
     
     # Search command
     search_parser = subparsers.add_parser("search", help="Search for projects")
@@ -161,6 +200,13 @@ def main():
     search_parser.add_argument("-v", "--version", action="append", help="Filter by game version (can be used multiple times)")
     search_parser.add_argument("-l", "--loader", action="append", help="Filter by loader (e.g., fabric, forge)")
     search_parser.add_argument("-c", "--category", action="append", help="Filter by category")
+    search_parser.add_argument("-n", "--limit", type=int, default=10, help="Number of results to display (default: 10)")
+    search_parser.add_argument("-o", "--offset", type=int, default=0, help="Offset for pagination (default: 0)")
+    
+    # Info command
+    info_parser = subparsers.add_parser("info", help="Get detailed information about a specific project")
+    info_parser.add_argument("slug", help="Project slug or ID")
+
     
     # Download command
     download_parser = subparsers.add_parser("download", help="Download projects")
@@ -185,7 +231,9 @@ def main():
     args = parser.parse_args()
     
     if args.command == "search":
-        search_projects(args.query, args.type, args.version, args.loader, args.category)
+        search_projects(args.query, args.type, args.version, args.loader, args.category, args.limit, args.offset)
+    elif args.command == "info":
+        project_info(args.slug)
     elif args.command == "download":
         download_project(args.slugs, args.version, args.loader)
     elif args.command == "versions":
