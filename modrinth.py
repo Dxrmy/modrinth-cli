@@ -8,10 +8,22 @@ import hashlib
 import os
 import time
 import zipfile
-
 BASE_URL = "https://api.modrinth.com/v2"
 CONFIG_FILE = os.path.expanduser("~/.modrinth-cli.json")
 JSON_OUTPUT = False
+
+# Hardcoded fallbacks for common acronyms or renamed projects that Modrinth search fails on
+KNOWN_ALIASES = {
+    'geo': 'glowing-emissive-ores',
+    'fa': 'fresh-animations',
+    'fa player': 'fa-player-extension',
+    'fa expressions': 'just-expressions',
+    'fa player expressions': 'just-expressions',
+    'fa emissive': 'fresh-animations-emissive',
+    'fa+player expressions': 'just-expressions',
+    'weskerson': 'tools-and-utils',
+    'weskersons 3d items': 'tools-and-utils'
+}
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -74,6 +86,15 @@ def _request(endpoint, params=None, is_post=False, post_data=None):
 
 def suggest_mods(query):
     query_clean = query.replace('-', ' ').replace('_', ' ').replace("'", "")
+    
+    # Check known aliases first
+    q_lower = query_clean.lower()
+    for alias, slug in KNOWN_ALIASES.items():
+        if alias in q_lower or q_lower.startswith(alias):
+            print(f"\nDid you mean one of these?")
+            print(f"  - {slug} (Known Alias for '{alias}')")
+            return
+            
     params = {'query': query_clean, 'limit': 3}
     url = f"{BASE_URL}/search?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={'User-Agent': 'modrinth-cli (github.com/Dxrmy/modrinth-cli)'})
@@ -89,6 +110,13 @@ def suggest_mods(query):
 
 def get_suggestion(query):
     query_clean = query.replace('-', ' ').replace('_', ' ').replace("'", "")
+    
+    # Check known aliases first
+    q_lower = query_clean.lower()
+    for alias, slug in KNOWN_ALIASES.items():
+        if alias in q_lower or q_lower.startswith(alias):
+            return slug
+            
     params = {'query': query_clean, 'limit': 1}
     url = f"{BASE_URL}/search?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={'User-Agent': 'modrinth-cli'})
