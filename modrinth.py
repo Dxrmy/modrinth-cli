@@ -11,6 +11,7 @@ import zipfile
 
 BASE_URL = "https://api.modrinth.com/v2"
 CONFIG_FILE = os.path.expanduser("~/.modrinth-cli.json")
+JSON_OUTPUT = False
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -71,7 +72,8 @@ def _request(endpoint, params=None, is_post=False, post_data=None):
             sys.exit(1)
 
 def suggest_mods(query):
-    params = {'query': query, 'limit': 3}
+    query_clean = query.replace('-', ' ').replace('_', ' ').replace("'", "")
+    params = {'query': query_clean, 'limit': 3}
     url = f"{BASE_URL}/search?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={'User-Agent': 'modrinth-cli (github.com/Dxrmy/modrinth-cli)'})
     try:
@@ -83,6 +85,20 @@ def suggest_mods(query):
                     print(f"  - {hit['slug']} ({hit['title']})")
     except Exception:
         pass
+
+def get_suggestion(query):
+    query_clean = query.replace('-', ' ').replace('_', ' ').replace("'", "")
+    params = {'query': query_clean, 'limit': 1}
+    url = f"{BASE_URL}/search?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={'User-Agent': 'modrinth-cli'})
+    try:
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            if data and data.get('hits'):
+                return data['hits'][0]['slug']
+    except Exception:
+        pass
+    return None
 
 def get_file_hash(filepath):
     sha512 = hashlib.sha512()
@@ -141,11 +157,18 @@ def get_primary_file(files):
     return files[0] if files else None
 
 def project_info(slug):
-    print(f"Fetching info for {slug}...")
+    if not JSON_OUTPUT: print(f"Fetching info for {slug}...")
     p = _request(f'/project/{slug}')
     if not p:
+        if JSON_OUTPUT:
+            print("{}")
+            sys.exit(1)
         print(f"Error: Project '{slug}' not found.")
         suggest_mods(slug)
+        sys.exit(1)
+        
+    if JSON_OUTPUT:
+        print(json.dumps(p, indent=2))
         return
         
     print(f"\n[{p['project_type'].upper()}] {p['title']} ({p['slug']})")
@@ -208,7 +231,13 @@ def search_projects(query, project_type, game_versions, loaders, categories, lim
         params['facets'] = json.dumps(facets)
         
     data = _request('/search', params)
-    if not data: return
+    if not data: 
+        if JSON_OUTPUT: print("[]")
+        sys.exit(1)
+        
+    if JSON_OUTPUT:
+        print(json.dumps(data, indent=2))
+        return
     
     print(f"Found {data['total_hits']} results. Showing {len(data['hits'])} results (Offset: {offset}):")
     print("-" * 60)
@@ -231,6 +260,8 @@ def search_projects(query, project_type, game_versions, loaders, categories, lim
 def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resolve=False, _resolved_set=None):
     if _resolved_set is None:
         _resolved_set = set()
+    
+    has_errors = False
 
     for slug in slugs:
         if slug in _resolved_set:
@@ -243,8 +274,18 @@ def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resol
         p_info = _request(f'/project/{slug}')
         if not p_info:
             print(f"Error: Project '{slug}' not found.")
-            suggest_mods(slug)
-            continue
+            suggestion = get_suggestion(slug)
+            if suggestion and suggestion != slug:
+                print(f"Did you mean '{suggestion}'? Automatically falling back to '{suggestion}'...")
+                slug = suggestion
+                p_info = _request(f'/project/{slug}')
+                if not p_info:
+                    has_errors = True
+                    continue
+            else:
+                suggest_mods(slug)
+                has_errors = True
+                continue
         p_type = p_info['project_type']
             
         params = {}
@@ -267,6 +308,7 @@ def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resol
                 sort_key = lambda s: [f"{int(x):05d}" if x.isdigit() else x for x in s.split('.')]
                 print(f"Available Game Versions: {', '.join(sorted(avail_gv, key=sort_key))}")
                 print(f"Available Loaders: {', '.join(sorted(avail_ld, key=sort_key))}")
+            has_errors = True
             continue
             
         latest_version = versions[0]
@@ -300,7 +342,10 @@ def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resol
                 print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
                 print(f"         (Tip: use --auto-resolve to download them automatically)")
             
-        download_file(download_url, routed_dest, filename, file_hash)
+        if not download_file(download_url, routed_dest, filename, file_hash):
+            has_errors = True
+    
+    return not has_errors
 
 def bulk_install(filepath, dest_dir, version, loader, auto_resolve):
     if not os.path.exists(filepath):
@@ -327,8 +372,15 @@ def list_versions(slug, version=None, loader=None):
     versions = _request(f'/project/{slug}/version', params)
     
     if versions is None:
+        if JSON_OUTPUT:
+            print("[]")
+            sys.exit(1)
         print(f"Error: Project '{slug}' not found.")
         suggest_mods(slug)
+        sys.exit(1)
+        
+    if JSON_OUTPUT:
+        print(json.dumps(versions, indent=2))
         return
         
     if not versions:
@@ -343,7 +395,8 @@ def list_versions(slug, version=None, loader=None):
             sort_key = lambda s: [f"{int(x):05d}" if x.isdigit() else x for x in s.split('.')]
             print(f"Available Game Versions: {', '.join(sorted(avail_gv, key=sort_key))}")
             print(f"Available Loaders: {', '.join(sorted(avail_ld, key=sort_key))}")
-        return
+        if JSON_OUTPUT: print("[]")
+        sys.exit(1)
         
     print(f"{'VERSION ID':<20} | {'NAME':<40} | {'FILE'}")
     print("-" * 85)
@@ -547,9 +600,25 @@ def uninstall_project(slug, directory):
 def main():
     parser = argparse.ArgumentParser(
         description="Modrinth CLI - A feature-rich command-line interface for interacting with the Modrinth API.",
-        epilog="Use 'modrinth.py <command> -h' for more information on a specific command. "
-               "You can also run 'modrinth.py init' or use ENV vars MODRINTH_VERSION, MODRINTH_LOADER, MODRINTH_DEST."
+        epilog="""
+PROGRAMMATIC USAGE GUIDE & EXAMPLES:
+  This CLI includes features specifically designed for programmatic use and scripting.
+  
+  General Scripting Tips:
+   - Always append `--json` when you need to parse output (available for search, info, versions).
+   - The script exits with status `1` on failure, `0` on success. Always check return codes.
+   - For downloading, pass exactly the Modrinth project slug (e.g., 'fabric-api', 'iris').
+   - If a download fails with a messy filename, the script will attempt a fuzzy auto-resolve.
+
+  Examples:
+   python modrinth.py search "sodium" --json
+   python modrinth.py download fabric-api -v 1.20.1 -l fabric
+   python modrinth.py versions iris -v 1.20.1 --json
+   python modrinth.py info sodium --json
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    parser.add_argument("--json", action="store_true", help="Output results as JSON for machine readability")
     
     subparsers = parser.add_subparsers(dest="command", help="Available Commands")
     
@@ -571,11 +640,11 @@ def main():
     info_parser.add_argument("slug", help="Project slug or ID")
     
     # Download command
-    download_parser = subparsers.add_parser("download", help="Download projects")
-    download_parser.add_argument("slugs", nargs="+", help="Project slugs or IDs (can specify multiple)")
-    download_parser.add_argument("-v", "--version", help="Specific game version to download for")
-    download_parser.add_argument("-l", "--loader", help="Specific loader to download for")
-    download_parser.add_argument("-d", "--dest", help="Destination directory to save the file to")
+    download_parser = subparsers.add_parser("download", help="Download projects (Scripting recommended)")
+    download_parser.add_argument("slugs", nargs="+", help="Exact Project slugs or IDs to download (e.g., 'sodium', 'iris')")
+    download_parser.add_argument("-v", "--version", help="Specific Minecraft version (e.g., '1.20.1', '26.2')")
+    download_parser.add_argument("-l", "--loader", help="Specific loader (e.g., 'fabric', 'forge')")
+    download_parser.add_argument("-d", "--dest", help="Destination folder (e.g., './mods')")
     download_parser.add_argument("-R", "--auto-resolve", action="store_true", help="Automatically resolve and download required dependencies")
     
     # Install command
@@ -618,6 +687,9 @@ def main():
 
     args = parser.parse_args()
     
+    global JSON_OUTPUT
+    JSON_OUTPUT = args.json
+    
     if args.command == "init":
         init_config()
         sys.exit(0)
@@ -640,7 +712,8 @@ def main():
     elif args.command == "info":
         project_info(args.slug)
     elif args.command == "download":
-        download_project(args.slugs, args.dest, args.version, args.loader, args.auto_resolve)
+        if not download_project(args.slugs, args.dest, args.version, args.loader, args.auto_resolve):
+            sys.exit(1)
     elif args.command == "install":
         bulk_install(args.filepath, args.dest, args.version, args.loader, args.auto_resolve)
     elif args.command == "uninstall":
