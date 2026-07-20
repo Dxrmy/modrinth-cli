@@ -4,6 +4,9 @@ import json
 import urllib.request
 import urllib.parse
 from urllib.error import URLError, HTTPError
+import hashlib
+import os
+import time
 
 BASE_URL = "https://api.modrinth.com/v2"
 
@@ -14,18 +17,70 @@ def _request(endpoint, params=None):
         url = f"{url}?{query_string}"
     
     req = urllib.request.Request(url, headers={'User-Agent': 'modrinth-cli (github.com/Dxrmy/modrinth-cli)'})
-    try:
-        with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode())
-    except HTTPError as e:
-        if e.code == 404:
-            print(f"Error 404: Not found -> {endpoint}")
+    
+    while True:
+        try:
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode())
+        except HTTPError as e:
+            if e.code == 429:
+                reset = int(e.headers.get('X-Ratelimit-Reset', 5))
+                print(f"Rate limited (429). Sleeping for {reset} seconds to respect API limits...")
+                time.sleep(reset + 1)
+                continue
+            if e.code == 404:
+                print(f"Error 404: Not found -> {endpoint}")
+                sys.exit(1)
+            print(f"HTTP Error {e.code}: {e.read().decode()}")
             sys.exit(1)
-        print(f"HTTP Error {e.code}: {e.read().decode()}")
-        sys.exit(1)
-    except URLError as e:
-        print(f"URL Error: {e.reason}")
-        sys.exit(1)
+        except URLError as e:
+            print(f"URL Error: {e.reason}")
+            sys.exit(1)
+
+def check_file_hash(filepath, expected_hash):
+    sha512 = hashlib.sha512()
+    with open(filepath, 'rb') as f:
+        while chunk := f.read(8192):
+            sha512.update(chunk)
+    return sha512.hexdigest() == expected_hash
+
+def download_file(url, dest_dir, filename, expected_hash=None):
+    if dest_dir:
+        os.makedirs(dest_dir, exist_ok=True)
+        filepath = os.path.join(dest_dir, filename)
+    else:
+        filepath = filename
+
+    if os.path.exists(filepath):
+        if expected_hash and check_file_hash(filepath, expected_hash):
+            print(f"File {filename} already exists and matches hash. Skipping download.")
+            return filepath
+        else:
+            print(f"File {filename} already exists but hash differs. Overwriting...")
+
+    print(f"Downloading {filename}...")
+    try:
+        urllib.request.urlretrieve(url, filepath)
+    except Exception as e:
+        print(f"Failed to download {filename}: {e}\n")
+        return None
+    
+    if expected_hash:
+        if not check_file_hash(filepath, expected_hash):
+            print(f"ERROR: Hash mismatch for {filename}! The file might be corrupted.")
+            os.remove(filepath)
+            return None
+        else:
+            print(f"Hash verified successfully.")
+            
+    print(f"Successfully saved to {filepath}\n")
+    return filepath
+
+def get_primary_file(files):
+    for f in files:
+        if f.get('primary'):
+            return f
+    return files[0] if files else None
 
 def project_info(slug):
     print(f"Fetching info for {slug}...")
@@ -88,7 +143,7 @@ def search_projects(query, project_type, game_versions, loaders, categories, lim
         
     data = _request('/search', params)
     
-    print(f"Found {data['total_hits']} results. Showing top {len(data['hits'])}:")
+    print(f"Found {data['total_hits']} results. Showing {len(data['hits'])} results (Offset: {offset}):")
     print("-" * 60)
     for hit in data['hits']:
         categories = ", ".join(hit.get('display_categories', []))
@@ -106,7 +161,7 @@ def search_projects(query, project_type, game_versions, loaders, categories, lim
         print(f"Client: {hit.get('client_side', 'unknown')} | Server: {hit.get('server_side', 'unknown')}")
         print("-" * 60)
 
-def download_project(slugs, version=None, loader=None):
+def download_project(slugs, dest_dir=None, version=None, loader=None):
     for slug in slugs:
         print(f"Fetching versions for {slug}...")
         params = {}
@@ -122,26 +177,29 @@ def download_project(slugs, version=None, loader=None):
             continue
             
         latest_version = versions[0]
-        file = latest_version['files'][0]
+        file = get_primary_file(latest_version.get('files', []))
+        if not file:
+            print(f"No files found in latest version for {slug}.")
+            continue
+            
         download_url = file['url']
         filename = file['filename']
+        file_hash = file.get('hashes', {}).get('sha512')
         
         game_versions = latest_version.get('game_versions', [])
         v_loaders = latest_version.get('loaders', [])
         print(f"Selected version: {latest_version['name']} (Versions: {', '.join(game_versions)} | Loaders: {', '.join(v_loaders)})")
         
+        if filename.endswith('.mrpack'):
+            print(f"NOTICE: You downloaded a Modpack format (.mrpack). You cannot put this directly in your mods folder.")
+            print(f"        Please import it using a compatible launcher like Prism Launcher or ATLauncher.")
+            
         dependencies = latest_version.get('dependencies', [])
         required = [d['project_id'] for d in dependencies if d.get('dependency_type') == 'required']
         if required:
             print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
             
-        print(f"Downloading {filename}...")
-        
-        try:
-            urllib.request.urlretrieve(download_url, filename)
-            print(f"Successfully downloaded {filename}\n")
-        except Exception as e:
-            print(f"Failed to download {filename}: {e}\n")
+        download_file(download_url, dest_dir, filename, file_hash)
 
 def list_versions(slug, version=None, loader=None):
     print(f"Fetching versions for {slug}...")
@@ -162,28 +220,32 @@ def list_versions(slug, version=None, loader=None):
     for v in versions:
         vid = v['id']
         name = v['name'][:37] + '...' if len(v['name']) > 40 else v['name']
-        filename = v['files'][0]['filename']
+        file = get_primary_file(v.get('files', []))
+        filename = file['filename'] if file else "Unknown"
         print(f"{vid:<20} | {name:<40} | {filename}")
 
-def download_version(version_id):
+def download_version(version_id, dest_dir=None):
     print(f"Fetching version info for {version_id}...")
     v = _request(f'/version/{version_id}')
-    file = v['files'][0]
+    file = get_primary_file(v.get('files', []))
+    if not file:
+        print("No files found in this version.")
+        return
+        
     download_url = file['url']
     filename = file['filename']
+    file_hash = file.get('hashes', {}).get('sha512')
     
-    print(f"Downloading {filename}...")
-    
+    if filename.endswith('.mrpack'):
+        print(f"NOTICE: You downloaded a Modpack format (.mrpack). You cannot put this directly in your mods folder.")
+        print(f"        Please import it using a compatible launcher like Prism Launcher or ATLauncher.")
+        
     dependencies = v.get('dependencies', [])
     required = [d['project_id'] for d in dependencies if d.get('dependency_type') == 'required']
     if required:
         print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
         
-    try:
-        urllib.request.urlretrieve(download_url, filename)
-        print(f"Successfully downloaded {filename}\n")
-    except Exception as e:
-        print(f"Failed to download {filename}: {e}\n")
+    download_file(download_url, dest_dir, filename, file_hash)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -213,6 +275,7 @@ def main():
     download_parser.add_argument("slugs", nargs="+", help="Project slugs or IDs (can specify multiple)")
     download_parser.add_argument("-v", "--version", help="Specific game version to download for")
     download_parser.add_argument("-l", "--loader", help="Specific loader to download for")
+    download_parser.add_argument("-d", "--dest", help="Destination directory to save the file to")
     
     # Filters command
     filters_parser = subparsers.add_parser("filters", help="List available filters")
@@ -227,6 +290,7 @@ def main():
     # Download-version command
     dl_ver_parser = subparsers.add_parser("download-version", help="Download a specific version by its ID")
     dl_ver_parser.add_argument("id", help="Version ID (from the 'versions' command)")
+    dl_ver_parser.add_argument("-d", "--dest", help="Destination directory to save the file to")
     
     args = parser.parse_args()
     
@@ -235,11 +299,11 @@ def main():
     elif args.command == "info":
         project_info(args.slug)
     elif args.command == "download":
-        download_project(args.slugs, args.version, args.loader)
+        download_project(args.slugs, args.dest, args.version, args.loader)
     elif args.command == "versions":
         list_versions(args.slug, args.version, args.loader)
     elif args.command == "download-version":
-        download_version(args.id)
+        download_version(args.id, args.dest)
     elif args.command == "filters":
         display_filters(args.type)
     else:
