@@ -8,6 +8,7 @@ import hashlib
 import os
 import time
 import zipfile
+import re
 BASE_URL = "https://api.modrinth.com/v2"
 CONFIG_FILE = os.path.expanduser("~/.modrinth-cli.json")
 JSON_OUTPUT = False
@@ -108,6 +109,24 @@ def suggest_mods(query):
     except Exception:
         pass
 
+def search_ddg(query):
+    # Free web scraping fallback using DuckDuckGo Lite
+    data = urllib.parse.urlencode({'q': query + ' site:modrinth.com'}).encode('utf-8')
+    req = urllib.request.Request(
+        'https://lite.duckduckgo.com/lite/',
+        data=data,
+        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    )
+    try:
+        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+        # Find exact Modrinth project slugs
+        matches = re.findall(r'modrinth\.com/(?:mod|resourcepack|shader)/([a-z0-9-_]+)', html)
+        if matches:
+            return matches[0]
+    except Exception:
+        pass
+    return None
+
 def get_suggestion(query):
     query_clean = query.replace('-', ' ').replace('_', ' ').replace("'", "")
     
@@ -117,6 +136,7 @@ def get_suggestion(query):
         if alias in q_lower or q_lower.startswith(alias):
             return slug
             
+    # Native Modrinth Search
     params = {'query': query_clean, 'limit': 1}
     url = f"{BASE_URL}/search?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={'User-Agent': 'modrinth-cli'})
@@ -127,6 +147,12 @@ def get_suggestion(query):
                 return data['hits'][0]['slug']
     except Exception:
         pass
+        
+    # DuckDuckGo Fallback for entirely unknown filenames
+    ddg_result = search_ddg(query)
+    if ddg_result:
+        return ddg_result
+        
     return None
 
 def get_file_hash(filepath):
