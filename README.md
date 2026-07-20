@@ -1,111 +1,81 @@
 # Modrinth CLI
 
-A blazing fast, insanely feature-rich command-line interface for the Modrinth API. Designed for quickly searching, managing, updating, and downloading mods, resource packs, and shaders directly from your terminal.
+A powerful, fast, and stateless command-line interface for interacting with the Modrinth API. Designed for both humans and AI agents.
 
-## Execution Methods
+## Features
 
-You have multiple ways to use this tool depending on your preference.
+- **Search**: Query the Modrinth API for mods, modpacks, resource packs, and shaders.
+- **Download**: Instantly download specific versions or latest releases of any project.
+- **Install (Bulk)**: Pass a text file of project slugs and bulk download all of them in one go!
+- **Auto-Resolve**: Automatically download required dependencies for any mod.
+- **Update**: Point to your `mods` folder, and it will hash your `.jar` files to check Modrinth for updates!
+- **Scan**: Point to a directory, and it will identify the exact project, name, and version of every `.jar` or `.zip` file inside.
+- **Uninstall**: Hash a directory and cleanly remove specific installed projects.
+- **Unpack**: Natively extract `.mrpack` modpack archives directly into a destination folder.
+- **Info & Versions**: View detailed project metadata and a complete version history.
 
-### Method 1: The Quick One-Liner (No Download)
-Run the script directly from GitHub without saving any files locally or explicitly typing `python3`:
+## AI & Scripting Friendly Features
+The Modrinth CLI was built from the ground up to be easily usable by other scripts, bash aliases, and AI agents.
+- Add `--json` to any command (e.g. `search`, `info`, `versions`) to get clean, parseable JSON output instead of human-readable text.
+- Standard Exit Codes: The script exits with status `0` on success, and `1` on failure (e.g., if a download fails, or 0 search results).
+- **Fuzzy Fallback**: If you accidentally try to `download` using an invalid name (e.g., `xali's Bushy Leaves v3.5.0.zip`), the CLI will automatically clean the query, search Modrinth's API for the closest match, and safely auto-resolve the correct slug for you.
+- **DuckDuckGo Fallback**: For completely obscure names, the CLI features a built-in DuckDuckGo HTML scraper to discover unindexed Modrinth URLs.
+
+## Installation
+
+No external dependencies are required. Just grab the script and run it with Python!
+
 ```bash
-curl -sL https://raw.githubusercontent.com/Dxrmy/modrinth-cli/main/run.sh | bash -s -- search "sodium"
+git clone https://github.com/Dxrmy/modrinth-cli.git
+cd modrinth-cli
+python modrinth.py -h
 ```
 
-### Method 2: Temporary Alias (Cleanest)
-Set up a temporary alias in your terminal to use the command smoothly during your current session:
+## Setup & Configuration
+
+You can interactively set up a default Minecraft Version, Loader, and Destination folder so you don't have to specify them every time:
+
 ```bash
-alias modrinth="curl -sL https://raw.githubusercontent.com/Dxrmy/modrinth-cli/main/modrinth.py | python3 -"
-modrinth search "sodium"
+python modrinth.py init
 ```
 
-### Method 3: Standalone Executable (No Python Required)
-You can download the pre-compiled standalone executable from the [Releases page](https://github.com/Dxrmy/modrinth-cli/releases).
+Alternatively, you can pass them as environment variables:
+`MODRINTH_VERSION`, `MODRINTH_LOADER`, `MODRINTH_DEST`.
+
+## Usage Examples
+
+**1. Searching for Mods**
 ```bash
-chmod +x modrinth-linux
-./modrinth-linux search "sodium"
+python modrinth.py search "sodium" -v 1.20.1 -l fabric
 ```
 
----
-
-## Configuration (`modrinth init`)
-
-Tired of typing `-v 1.20.1 -l fabric` every time? Run the interactive setup!
+**2. Downloading a Project**
 ```bash
-modrinth init
-```
-This will ask you for your default Minecraft version, loader, and base directory (e.g. `~/.minecraft`), saving it to `~/.modrinth-cli.json`. The CLI will automatically use these defaults globally!
-
-*(Alternatively, you can export `MODRINTH_VERSION`, `MODRINTH_LOADER`, and `MODRINTH_DEST` environment variables).*
-
----
-
-## Core Commands
-
-### 🔍 Search & Discovery
-Search for mods, filter by loaders/versions, and view rich formatting including Client/Server support.
-```bash
-modrinth search "sodium" -v 1.20.1 -l fabric --limit 20
+# Downloads the latest version of sodium for 1.20.1 Fabric
+python modrinth.py download sodium -v 1.20.1 -l fabric -d ./mods
 ```
 
-### 📥 Downloading Mods
-Download mods instantly, with built-in hash verification to prevent corrupted jars.
+**3. Bulk Installing from a Text File**
 ```bash
-modrinth download sodium lithium phosphor -v 1.20.1 -l fabric
+python modrinth.py install slugs.txt -v 1.20.1 -l fabric -d ./mods -R
+```
+*(The `-R` flag tells the CLI to automatically resolve and download required dependencies!)*
+
+**4. Scanning Your Mods Folder**
+```bash
+python modrinth.py scan -d ~/.minecraft/mods
 ```
 
-**Auto-Resolve Dependencies (`-R`)**
-Don't want to crash because you forgot the Fabric API? Use `-R` to automatically resolve and recursively download all required libraries!
+**5. Checking for Updates**
 ```bash
-modrinth download sodium -R
+python modrinth.py update -d ~/.minecraft/mods
 ```
 
-**Smart Routing**
-If you configured a base directory (or pass `-d ~/.minecraft`), the CLI will automatically route mods to `/mods`, resource packs to `/resourcepacks`, and shaders to `/shaderpacks`!
-
-### ℹ️ Project Info & File Versions
-Get detailed data (Source Code URLs, issue trackers, discord links, follower counts).
+**6. Getting Machine-Readable JSON (For AI/Scripts)**
 ```bash
-modrinth info fallingleaves
+python modrinth.py --json search "iris"
 ```
 
-See exactly what files are available to download, to pick the precise variant you need (e.g., "With Eyes" vs "Eyeless").
-```bash
-modrinth versions tras-fresh-player
-modrinth download-version BX6pU42f
-```
-
----
-
-## Advanced Commands
-
-### 🔄 Bulk Install
-Given a text file (`modlist.txt`) full of mod slugs, download them all at once!
-```bash
-modrinth install modlist.txt -R
-```
-
-### 📦 Unpack Modpacks Natively
-Tired of third-party launchers? Natively unpack `.mrpack` archives directly from the CLI. It will automatically read the index, download every single jar file, and extract all config overrides!
-```bash
-modrinth unpack optimize.mrpack -d ~/.minecraft
-```
-
-### 🚀 Update Checker
-Scan your entire `mods/` directory. The CLI will calculate the SHA-512 hashes of all local jars, send a bulk API request to identify them, and notify you if newer updates exist!
-```bash
-modrinth update -d ~/.minecraft/mods
-```
-
-### 🗑️ Uninstall Mods
-Cleanly remove a mod from your mods folder by hashing the files and finding the exact one you want to delete.
-```bash
-modrinth uninstall sodium -d ~/.minecraft/mods
-```
-
----
-
-## Important Notice
-
-- This tool interacts with the official Modrinth API but is not an official Modrinth product.
-- Be respectful to the API limits when using automated scripts (the CLI has built-in Rate Limit handlers to automatically sleep and protect you from 429s).
+## Tips
+- Always use the precise **project slug** when downloading (e.g., `fabric-api`, not `Fabric API`).
+- If you don't know the slug, run a `search` first or let the Fuzzy Fallback handle it!
