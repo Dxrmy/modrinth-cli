@@ -9,6 +9,8 @@ import os
 import time
 import zipfile
 import re
+import subprocess
+import shutil
 BASE_URL = "https://api.modrinth.com/v2"
 CONFIG_FILE = os.path.expanduser("~/.modrinth-cli.json")
 JSON_OUTPUT = False
@@ -127,6 +129,16 @@ def search_ddg(query):
         pass
     return None
 
+def search_surfraw(query):
+    if shutil.which('surfraw'):
+        print(f"\n[!] Modrinth and DDG API failed. Opening Surfraw to search for: '{query}'")
+        try:
+            subprocess.run(['surfraw', 'duckduckgo', f"{query} site:modrinth.com"])
+            return True
+        except Exception:
+            pass
+    return False
+
 def get_suggestion(query):
     query_clean = query.replace('-', ' ').replace('_', ' ').replace("'", "")
     
@@ -152,6 +164,9 @@ def get_suggestion(query):
     ddg_result = search_ddg(query)
     if ddg_result:
         return ddg_result
+        
+    # Final Fallback: Surfraw
+    search_surfraw(query)
         
     return None
 
@@ -606,6 +621,46 @@ def update_mods(directory):
         else:
             print(f"  -> Up to date.")
 
+def scan_directory(directory):
+    if not os.path.isdir(directory):
+        print(f"Error: Directory {directory} does not exist.")
+        return
+        
+    print(f"Scanning {directory} for mod/pack files...")
+    hashes = []
+    file_map = {}
+    for filename in os.listdir(directory):
+        if filename.endswith('.jar') or filename.endswith('.zip'):
+            filepath = os.path.join(directory, filename)
+            sha512 = get_file_hash(filepath)
+            hashes.append(sha512)
+            file_map[sha512] = filepath
+            
+    if not hashes:
+        print("No .jar or .zip files found.")
+        return
+        
+    print(f"Found {len(hashes)} files. Querying Modrinth API for identities...")
+    post_data = {"hashes": hashes, "algorithm": "sha512"}
+    try:
+        versions_data = _request('/version_files', is_post=True, post_data=post_data)
+    except Exception as e:
+        print(f"Error identifying files: {e}")
+        return
+        
+    print(f"\nSuccessfully identified {len(versions_data)} files:\n" + "-" * 80)
+    for h, v in versions_data.items():
+        filepath = file_map[h]
+        p_info = _request(f"/project/{v['project_id']}")
+        p_title = p_info['title'] if p_info else "Unknown Project"
+        
+        print(f"File:     {os.path.basename(filepath)}")
+        print(f"Project:  {p_title} (ID: {v['project_id']})")
+        print(f"Version:  {v['name']} (ID: {v['id']})")
+        print(f"Loaders:  {', '.join(v.get('loaders', []))}")
+        print(f"Game Ver: {', '.join(v.get('game_versions', []))}")
+        print("-" * 80)
+
 def uninstall_project(slug, directory):
     if not os.path.isdir(directory):
         print(f"Error: Directory {directory} does not exist.")
@@ -739,6 +794,10 @@ PROGRAMMATIC USAGE GUIDE & EXAMPLES:
     update_parser = subparsers.add_parser("update", help="Check a directory for mod updates")
     update_parser.add_argument("-d", "--dir", default=".", help="Directory containing .jar mods to check")
 
+    # Scan command
+    scan_parser = subparsers.add_parser("scan", help="Scan a directory and identify all mod/pack versions")
+    scan_parser.add_argument("-d", "--dir", default=".", help="Directory containing files to scan")
+
     global JSON_OUTPUT
     if '--json' in sys.argv:
         JSON_OUTPUT = True
@@ -784,6 +843,8 @@ PROGRAMMATIC USAGE GUIDE & EXAMPLES:
         unpack_mrpack(args.filepath, getattr(args, 'dest', '.'))
     elif args.command == "update":
         update_mods(getattr(args, 'dir', '.'))
+    elif args.command == "scan":
+        scan_directory(getattr(args, 'dir', '.'))
     elif args.command == "filters":
         display_filters(args.type)
     else:
