@@ -40,6 +40,7 @@ def init_config():
     print("These defaults will now be used automatically if you don't specify them in commands.")
 
 def _request(endpoint, params=None, is_post=False, post_data=None):
+    endpoint = urllib.parse.quote(endpoint, safe='/:?=&')
     url = f"{BASE_URL}{endpoint}"
     if params:
         query_string = urllib.parse.urlencode(params, doseq=True)
@@ -618,7 +619,6 @@ PROGRAMMATIC USAGE GUIDE & EXAMPLES:
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--json", action="store_true", help="Output results as JSON for machine readability")
     
     subparsers = parser.add_subparsers(dest="command", help="Available Commands")
     
@@ -685,10 +685,14 @@ PROGRAMMATIC USAGE GUIDE & EXAMPLES:
     update_parser = subparsers.add_parser("update", help="Check a directory for mod updates")
     update_parser.add_argument("-d", "--dir", default=".", help="Directory containing .jar mods to check")
 
-    args = parser.parse_args()
-    
     global JSON_OUTPUT
-    JSON_OUTPUT = args.json
+    if '--json' in sys.argv:
+        JSON_OUTPUT = True
+        sys.argv.remove('--json')
+    else:
+        JSON_OUTPUT = False
+
+    args = parser.parse_args()
     
     if args.command == "init":
         init_config()
