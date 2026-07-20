@@ -10,6 +10,33 @@ import time
 import zipfile
 
 BASE_URL = "https://api.modrinth.com/v2"
+CONFIG_FILE = os.path.expanduser("~/.modrinth-cli.json")
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def init_config():
+    print("--- Modrinth CLI Setup ---")
+    mc_version = input("Default Minecraft Version (e.g. 1.20.1) [Leave blank to skip]: ").strip()
+    loader = input("Default Loader (e.g. fabric, forge, neoforge) [Leave blank to skip]: ").strip()
+    mc_dir = input("Default Base Directory (e.g. ~/.minecraft) [Leave blank to skip]: ").strip()
+    
+    config = {}
+    if mc_version: config['version'] = mc_version
+    if loader: config['loader'] = loader
+    if mc_dir: config['dest'] = os.path.expanduser(mc_dir)
+    
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=4)
+        
+    print(f"\nConfiguration saved to {CONFIG_FILE}!")
+    print("These defaults will now be used automatically if you don't specify them in commands.")
 
 def _request(endpoint, params=None, is_post=False, post_data=None):
     url = f"{BASE_URL}{endpoint}"
@@ -53,6 +80,16 @@ def get_file_hash(filepath):
 
 def check_file_hash(filepath, expected_hash):
     return get_file_hash(filepath) == expected_hash
+
+def get_routed_dest(base_dest, project_type):
+    if not base_dest: return None
+    basename = os.path.basename(base_dest.rstrip('/\\'))
+    if basename in ['mods', 'shaderpacks', 'resourcepacks']:
+        return base_dest
+        
+    if project_type == 'shader': return os.path.join(base_dest, 'shaderpacks')
+    if project_type == 'resourcepack': return os.path.join(base_dest, 'resourcepacks')
+    return os.path.join(base_dest, 'mods')
 
 def download_file(url, dest_dir, filename, expected_hash=None, silent=False):
     if dest_dir:
@@ -179,6 +216,14 @@ def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resol
         _resolved_set.add(slug)
         
         print(f"Fetching versions for {slug}...")
+        
+        # Get project type for smart routing
+        try:
+            p_info = _request(f'/project/{slug}')
+            p_type = p_info['project_type']
+        except Exception:
+            p_type = 'mod'
+            
         params = {}
         if loader:
             params['loaders'] = json.dumps([loader])
@@ -212,6 +257,8 @@ def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resol
         dependencies = latest_version.get('dependencies', [])
         required = [d['project_id'] for d in dependencies if d.get('dependency_type') == 'required']
         
+        routed_dest = get_routed_dest(dest_dir, p_type)
+        
         if required:
             if auto_resolve:
                 print(f"Auto-resolving dependencies for {slug}...")
@@ -220,7 +267,21 @@ def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resol
                 print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
                 print(f"         (Tip: use --auto-resolve to download them automatically)")
             
-        download_file(download_url, dest_dir, filename, file_hash)
+        download_file(download_url, routed_dest, filename, file_hash)
+
+def bulk_install(filepath, dest_dir, version, loader, auto_resolve):
+    if not os.path.exists(filepath):
+        print(f"Error: {filepath} not found.")
+        return
+    with open(filepath, 'r') as f:
+        slugs = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+    
+    if not slugs:
+        print("No valid slugs found in the file.")
+        return
+        
+    print(f"Bulk installing {len(slugs)} projects...")
+    download_project(slugs, dest_dir, version, loader, auto_resolve)
 
 def list_versions(slug, version=None, loader=None):
     print(f"Fetching versions for {slug}...")
@@ -257,6 +318,14 @@ def download_version(version_id, dest_dir=None, auto_resolve=False):
     filename = file['filename']
     file_hash = file.get('hashes', {}).get('sha512')
     
+    try:
+        p_info = _request(f'/project/{v["project_id"]}')
+        p_type = p_info['project_type']
+    except Exception:
+        p_type = 'mod'
+        
+    routed_dest = get_routed_dest(dest_dir, p_type)
+    
     if filename.endswith('.mrpack'):
         print(f"NOTICE: You downloaded a Modpack format (.mrpack). You cannot put this directly in your mods folder.")
         
@@ -273,7 +342,7 @@ def download_version(version_id, dest_dir=None, auto_resolve=False):
         else:
             print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
         
-    download_file(download_url, dest_dir, filename, file_hash)
+    download_file(download_url, routed_dest, filename, file_hash)
 
 def unpack_mrpack(filepath, dest_dir):
     if not os.path.exists(filepath):
@@ -305,14 +374,12 @@ def unpack_mrpack(filepath, dest_dir):
                     
                 url = downloads[0]
                 filename = os.path.basename(file_info['path'])
-                # .mrpack standard specifies 'path' like 'mods/sodium.jar'
                 file_dest = os.path.join(dest_dir, os.path.dirname(file_info['path']))
                 expected_hash = file_info.get('hashes', {}).get('sha512')
                 
                 print(f"Downloading pack file: {filename}...")
                 download_file(url, file_dest, filename, expected_hash, silent=True)
                 
-            # Extract overrides (e.g. config files)
             print("Extracting overrides and configs...")
             for member in z.namelist():
                 if member.startswith('overrides/') and not member.endswith('/'):
@@ -322,7 +389,7 @@ def unpack_mrpack(filepath, dest_dir):
                         outfile.write(z.read(member))
                         
             if failed:
-                print("\nNOTICE: The following files could not be downloaded automatically (missing URLs, likely external):")
+                print("\nNOTICE: The following files could not be downloaded automatically (missing URLs, likely external like CurseForge):")
                 for f in failed:
                     print(f" - {f}")
             print("\nModpack successfully unpacked!")
@@ -379,19 +446,66 @@ def update_mods(directory):
         latest = project_versions[0]
         if latest['id'] != current_version_id:
             print(f"  -> UPDATE AVAILABLE: {latest['name']}!")
-            # Note: We just list the update for now. 
-            # The user can use download-version {latest['id']} to grab it.
         else:
             print(f"  -> Up to date.")
+
+def uninstall_project(slug, directory):
+    if not os.path.isdir(directory):
+        print(f"Error: Directory {directory} does not exist.")
+        return
+        
+    print(f"Fetching project info for '{slug}' to get ID...")
+    try:
+        p = _request(f'/project/{slug}')
+        target_id = p['id']
+    except Exception:
+        print(f"Error: Project '{slug}' not found on Modrinth.")
+        return
+
+    print(f"Scanning {directory} for installed mods...")
+    hashes = []
+    file_map = {}
+    for filename in os.listdir(directory):
+        if filename.endswith('.jar'):
+            filepath = os.path.join(directory, filename)
+            sha512 = get_file_hash(filepath)
+            hashes.append(sha512)
+            file_map[sha512] = filepath
+            
+    if not hashes:
+        print("No .jar files found to uninstall.")
+        return
+        
+    post_data = {"hashes": hashes, "algorithm": "sha512"}
+    try:
+        versions_data = _request('/version_files', is_post=True, post_data=post_data)
+    except Exception as e:
+        print(f"Error identifying files: {e}")
+        return
+        
+    removed = False
+    for h, v in versions_data.items():
+        if v['project_id'] == target_id:
+            filepath = file_map[h]
+            print(f"Found match: {filepath} (Version: {v['name']})")
+            os.remove(filepath)
+            print("Successfully uninstalled.")
+            removed = True
+            
+    if not removed:
+        print(f"Could not find any installed files for project '{slug}' in {directory}.")
 
 def main():
     parser = argparse.ArgumentParser(
         description="Modrinth CLI - A feature-rich command-line interface for interacting with the Modrinth API.",
         epilog="Use 'modrinth.py <command> -h' for more information on a specific command. "
-               "You can also use ENV vars MODRINTH_VERSION, MODRINTH_LOADER, MODRINTH_DEST."
+               "You can also run 'modrinth.py init' or use ENV vars MODRINTH_VERSION, MODRINTH_LOADER, MODRINTH_DEST."
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Available Commands")
+    
+    # Init command
+    subparsers.add_parser("init", help="Interactively set up default configuration (version, loader, dest)")
     
     # Search command
     search_parser = subparsers.add_parser("search", help="Search for projects")
@@ -415,6 +529,19 @@ def main():
     download_parser.add_argument("-d", "--dest", help="Destination directory to save the file to")
     download_parser.add_argument("-R", "--auto-resolve", action="store_true", help="Automatically resolve and download required dependencies")
     
+    # Install command
+    install_parser = subparsers.add_parser("install", help="Bulk install projects from a text file")
+    install_parser.add_argument("filepath", help="Path to a text file containing project slugs/IDs")
+    install_parser.add_argument("-v", "--version", help="Specific game version to download for")
+    install_parser.add_argument("-l", "--loader", help="Specific loader to download for")
+    install_parser.add_argument("-d", "--dest", help="Destination directory to save the file to")
+    install_parser.add_argument("-R", "--auto-resolve", action="store_true", help="Automatically resolve and download required dependencies")
+
+    # Uninstall command
+    uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall a specific mod by hashing jars and matching API")
+    uninstall_parser.add_argument("slug", help="Project slug to uninstall")
+    uninstall_parser.add_argument("-d", "--dir", default=".", help="Directory containing the installed .jar files")
+
     # Filters command
     filters_parser = subparsers.add_parser("filters", help="List available filters")
     filters_parser.add_argument("type", choices=["categories", "loaders", "versions"], help="Type of filters to list")
@@ -442,13 +569,17 @@ def main():
 
     args = parser.parse_args()
     
-    # Fallback to Environment Variables
-    env_version = os.environ.get("MODRINTH_VERSION")
-    env_loader = os.environ.get("MODRINTH_LOADER")
-    env_dest = os.environ.get("MODRINTH_DEST")
+    if args.command == "init":
+        init_config()
+        sys.exit(0)
+    
+    # Fallback to Config File & Environment Variables
+    config = load_config()
+    env_version = os.environ.get("MODRINTH_VERSION") or config.get("version")
+    env_loader = os.environ.get("MODRINTH_LOADER") or config.get("loader")
+    env_dest = os.environ.get("MODRINTH_DEST") or config.get("dest")
     
     if hasattr(args, 'version') and args.version is None and env_version:
-        # search uses list, download uses string
         args.version = [env_version] if getattr(args, 'command', '') == 'search' else env_version
     if hasattr(args, 'loader') and args.loader is None and env_loader:
         args.loader = [env_loader] if getattr(args, 'command', '') == 'search' else env_loader
@@ -461,14 +592,18 @@ def main():
         project_info(args.slug)
     elif args.command == "download":
         download_project(args.slugs, args.dest, args.version, args.loader, args.auto_resolve)
+    elif args.command == "install":
+        bulk_install(args.filepath, args.dest, args.version, args.loader, args.auto_resolve)
+    elif args.command == "uninstall":
+        uninstall_project(args.slug, getattr(args, 'dir', '.'))
     elif args.command == "versions":
         list_versions(args.slug, args.version, args.loader)
     elif args.command == "download-version":
         download_version(args.id, args.dest, args.auto_resolve)
     elif args.command == "unpack":
-        unpack_mrpack(args.filepath, args.dest)
+        unpack_mrpack(args.filepath, getattr(args, 'dest', '.'))
     elif args.command == "update":
-        update_mods(args.dir)
+        update_mods(getattr(args, 'dir', '.'))
     elif args.command == "filters":
         display_filters(args.type)
     else:
