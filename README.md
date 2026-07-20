@@ -1,8 +1,8 @@
 # Modrinth CLI
 
-A simple and lightweight command-line interface for interacting with the Modrinth API. Designed for quickly searching, filtering, and downloading mods and resourcepacks directly from your terminal.
+A blazing fast, insanely feature-rich command-line interface for the Modrinth API. Designed for quickly searching, managing, updating, and downloading mods, resource packs, and shaders directly from your terminal.
 
-## Installation / Execution
+## Execution Methods
 
 You have multiple ways to use this tool depending on your preference.
 
@@ -19,33 +19,93 @@ alias modrinth="curl -sL https://raw.githubusercontent.com/Dxrmy/modrinth-cli/ma
 modrinth search "sodium"
 ```
 
-### Method 3: Standalone Executable
-You can download the pre-compiled standalone executable from the [Releases page](https://github.com/Dxrmy/modrinth-cli/releases). This requires absolutely no python installation!
+### Method 3: Standalone Executable (No Python Required)
+You can download the pre-compiled standalone executable from the [Releases page](https://github.com/Dxrmy/modrinth-cli/releases).
 ```bash
 chmod +x modrinth-linux
 ./modrinth-linux search "sodium"
 ```
 
-### Method 4: Clone & Run (For Developers)
-1. Ensure you have Python 3 installed.
-2. Clone this repository: `git clone https://github.com/Dxrmy/modrinth-cli`
-3. Navigate to the directory: `cd modrinth-cli`
-4. Install the required dependencies: `pip install -r requirements.txt`
-5. Run the script using Python: `python3 modrinth.py [command] [arguments]`
+---
 
-## Usage
+## Configuration (`modrinth init`)
 
-### Commands
+Tired of typing `-v 1.20.1 -l fabric` every time? Run the interactive setup!
+```bash
+modrinth init
+```
+This will ask you for your default Minecraft version, loader, and base directory (e.g. `~/.minecraft`), saving it to `~/.modrinth-cli.json`. The CLI will automatically use these defaults globally!
 
-| Command | Description | Example |
-|---|---|---|
-| `search` | Search for projects with various filters (type, loader, version). | `modrinth search "sodium" --type mod` |
-| `download` | Download the latest version of a project by slug/id. | `modrinth download sodium --version 1.20.1` |
-| `filters` | List available filters (categories, loaders, versions). | `modrinth filters categories` |
+*(Alternatively, you can export `MODRINTH_VERSION`, `MODRINTH_LOADER`, and `MODRINTH_DEST` environment variables).*
 
-*(Note: The examples above assume you are using the alias or executable. Adjust the prefix if you are using the one-liner or running it via python3 directly.)*
+---
+
+## Core Commands
+
+### 🔍 Search & Discovery
+Search for mods, filter by loaders/versions, and view rich formatting including Client/Server support.
+```bash
+modrinth search "sodium" -v 1.20.1 -l fabric --limit 20
+```
+
+### 📥 Downloading Mods
+Download mods instantly, with built-in hash verification to prevent corrupted jars.
+```bash
+modrinth download sodium lithium phosphor -v 1.20.1 -l fabric
+```
+
+**Auto-Resolve Dependencies (`-R`)**
+Don't want to crash because you forgot the Fabric API? Use `-R` to automatically resolve and recursively download all required libraries!
+```bash
+modrinth download sodium -R
+```
+
+**Smart Routing**
+If you configured a base directory (or pass `-d ~/.minecraft`), the CLI will automatically route mods to `/mods`, resource packs to `/resourcepacks`, and shaders to `/shaderpacks`!
+
+### ℹ️ Project Info & File Versions
+Get detailed data (Source Code URLs, issue trackers, discord links, follower counts).
+```bash
+modrinth info fallingleaves
+```
+
+See exactly what files are available to download, to pick the precise variant you need (e.g., "With Eyes" vs "Eyeless").
+```bash
+modrinth versions tras-fresh-player
+modrinth download-version BX6pU42f
+```
+
+---
+
+## Advanced Commands
+
+### 🔄 Bulk Install
+Given a text file (`modlist.txt`) full of mod slugs, download them all at once!
+```bash
+modrinth install modlist.txt -R
+```
+
+### 📦 Unpack Modpacks Natively
+Tired of third-party launchers? Natively unpack `.mrpack` archives directly from the CLI. It will automatically read the index, download every single jar file, and extract all config overrides!
+```bash
+modrinth unpack optimize.mrpack -d ~/.minecraft
+```
+
+### 🚀 Update Checker
+Scan your entire `mods/` directory. The CLI will calculate the SHA-512 hashes of all local jars, send a bulk API request to identify them, and notify you if newer updates exist!
+```bash
+modrinth update -d ~/.minecraft/mods
+```
+
+### 🗑️ Uninstall Mods
+Cleanly remove a mod from your mods folder by hashing the files and finding the exact one you want to delete.
+```bash
+modrinth uninstall sodium -d ~/.minecraft/mods
+```
+
+---
 
 ## Important Notice
 
 - This tool interacts with the official Modrinth API but is not an official Modrinth product.
-- Be respectful to the API limits when using automated scripts.
+- Be respectful to the API limits when using automated scripts (the CLI has built-in Rate Limit handlers to automatically sleep and protect you from 429s).
