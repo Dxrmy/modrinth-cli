@@ -257,6 +257,16 @@ def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resol
         
         if not versions:
             print(f"No versions found matching the criteria for {slug}.")
+            all_versions = _request(f'/project/{slug}/version')
+            if all_versions:
+                avail_gv = set()
+                avail_ld = set()
+                for v in all_versions:
+                    avail_gv.update(v.get('game_versions', []))
+                    avail_ld.update(v.get('loaders', []))
+                sort_key = lambda s: [f"{int(x):05d}" if x.isdigit() else x for x in s.split('.')]
+                print(f"Available Game Versions: {', '.join(sorted(avail_gv, key=sort_key))}")
+                print(f"Available Loaders: {', '.join(sorted(avail_ld, key=sort_key))}")
             continue
             
         latest_version = versions[0]
@@ -323,6 +333,16 @@ def list_versions(slug, version=None, loader=None):
         
     if not versions:
         print(f"No versions found matching the criteria for {slug}.")
+        all_versions = _request(f'/project/{slug}/version')
+        if all_versions:
+            avail_gv = set()
+            avail_ld = set()
+            for v in all_versions:
+                avail_gv.update(v.get('game_versions', []))
+                avail_ld.update(v.get('loaders', []))
+            sort_key = lambda s: [f"{int(x):05d}" if x.isdigit() else x for x in s.split('.')]
+            print(f"Available Game Versions: {', '.join(sorted(avail_gv, key=sort_key))}")
+            print(f"Available Loaders: {', '.join(sorted(avail_ld, key=sort_key))}")
         return
         
     print(f"{'VERSION ID':<20} | {'NAME':<40} | {'FILE'}")
