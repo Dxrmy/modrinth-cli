@@ -73,32 +73,33 @@ def search_projects(query, project_type, game_versions, loaders, categories):
         print(f"Downloads: {hit['downloads']}")
         print("-" * 60)
 
-def download_project(slug, version=None, loader=None):
-    print(f"Fetching versions for {slug}...")
-    params = {}
-    if loader:
-        params['loaders'] = json.dumps([loader])
-    if version:
-        params['game_versions'] = json.dumps([version])
+def download_project(slugs, version=None, loader=None):
+    for slug in slugs:
+        print(f"Fetching versions for {slug}...")
+        params = {}
+        if loader:
+            params['loaders'] = json.dumps([loader])
+        if version:
+            params['game_versions'] = json.dumps([version])
+            
+        versions = _request(f'/project/{slug}/version', params)
         
-    versions = _request(f'/project/{slug}/version', params)
-    
-    if not versions:
-        print("No versions found matching the criteria.")
-        return
+        if not versions:
+            print(f"No versions found matching the criteria for {slug}.")
+            continue
+            
+        latest_version = versions[0]
+        file = latest_version['files'][0]
+        download_url = file['url']
+        filename = file['filename']
         
-    latest_version = versions[0]
-    file = latest_version['files'][0]
-    download_url = file['url']
-    filename = file['filename']
-    
-    print(f"Downloading {filename}...")
-    
-    try:
-        urllib.request.urlretrieve(download_url, filename)
-        print(f"Successfully downloaded {filename}")
-    except Exception as e:
-        print(f"Failed to download: {e}")
+        print(f"Downloading {filename}...")
+        
+        try:
+            urllib.request.urlretrieve(download_url, filename)
+            print(f"Successfully downloaded {filename}\n")
+        except Exception as e:
+            print(f"Failed to download {filename}: {e}\n")
 
 def main():
     parser = argparse.ArgumentParser(description="Modrinth CLI - Interact with the Modrinth API")
@@ -114,8 +115,8 @@ def main():
     search_parser.add_argument("-c", "--category", action="append", help="Filter by category")
     
     # Download command
-    download_parser = subparsers.add_parser("download", help="Download a project")
-    download_parser.add_argument("slug", help="Project slug or ID")
+    download_parser = subparsers.add_parser("download", help="Download projects")
+    download_parser.add_argument("slugs", nargs="+", help="Project slugs or IDs (can specify multiple)")
     download_parser.add_argument("-v", "--version", help="Specific game version to download for")
     download_parser.add_argument("-l", "--loader", help="Specific loader to download for")
     
@@ -128,7 +129,7 @@ def main():
     if args.command == "search":
         search_projects(args.query, args.type, args.version, args.loader, args.category)
     elif args.command == "download":
-        download_project(args.slug, args.version, args.loader)
+        download_project(args.slugs, args.version, args.loader)
     elif args.command == "filters":
         display_filters(args.type)
     else:
