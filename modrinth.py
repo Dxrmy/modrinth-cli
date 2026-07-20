@@ -101,6 +101,42 @@ def download_project(slugs, version=None, loader=None):
         except Exception as e:
             print(f"Failed to download {filename}: {e}\n")
 
+def list_versions(slug, version=None, loader=None):
+    print(f"Fetching versions for {slug}...")
+    params = {}
+    if loader:
+        params['loaders'] = json.dumps([loader])
+    if version:
+        params['game_versions'] = json.dumps([version])
+        
+    versions = _request(f'/project/{slug}/version', params)
+    
+    if not versions:
+        print(f"No versions found matching the criteria for {slug}.")
+        return
+        
+    print(f"{'VERSION ID':<20} | {'NAME':<40} | {'FILE'}")
+    print("-" * 85)
+    for v in versions:
+        vid = v['id']
+        name = v['name'][:37] + '...' if len(v['name']) > 40 else v['name']
+        filename = v['files'][0]['filename']
+        print(f"{vid:<20} | {name:<40} | {filename}")
+
+def download_version(version_id):
+    print(f"Fetching version info for {version_id}...")
+    v = _request(f'/version/{version_id}')
+    file = v['files'][0]
+    download_url = file['url']
+    filename = file['filename']
+    
+    print(f"Downloading {filename}...")
+    try:
+        urllib.request.urlretrieve(download_url, filename)
+        print(f"Successfully downloaded {filename}\n")
+    except Exception as e:
+        print(f"Failed to download {filename}: {e}\n")
+
 def main():
     parser = argparse.ArgumentParser(description="Modrinth CLI - Interact with the Modrinth API")
     
@@ -124,12 +160,26 @@ def main():
     filters_parser = subparsers.add_parser("filters", help="List available filters")
     filters_parser.add_argument("type", choices=["categories", "loaders", "versions"], help="Type of filters to list")
     
+    # Versions command
+    versions_parser = subparsers.add_parser("versions", help="List available versions/files for a project")
+    versions_parser.add_argument("slug", help="Project slug or ID")
+    versions_parser.add_argument("-v", "--version", help="Specific game version to filter")
+    versions_parser.add_argument("-l", "--loader", help="Specific loader to filter")
+
+    # Download-version command
+    dl_ver_parser = subparsers.add_parser("download-version", help="Download a specific version by its ID")
+    dl_ver_parser.add_argument("id", help="Version ID (from the 'versions' command)")
+    
     args = parser.parse_args()
     
     if args.command == "search":
         search_projects(args.query, args.type, args.version, args.loader, args.category)
     elif args.command == "download":
         download_project(args.slugs, args.version, args.loader)
+    elif args.command == "versions":
+        list_versions(args.slug, args.version, args.loader)
+    elif args.command == "download-version":
+        download_version(args.id)
     elif args.command == "filters":
         display_filters(args.type)
     else:
