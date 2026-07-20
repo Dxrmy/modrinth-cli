@@ -67,10 +67,19 @@ def search_projects(query, project_type, game_versions, loaders, categories):
     print(f"Found {data['total_hits']} results. Showing top {len(data['hits'])}:")
     print("-" * 60)
     for hit in data['hits']:
+        categories = ", ".join(hit.get('display_categories', []))
+        versions = hit.get('versions', [])
+        if len(versions) > 6:
+            versions_str = f"{versions[0]}, {versions[1]}, {versions[2]} ... {versions[-3]}, {versions[-2]}, {versions[-1]}"
+        else:
+            versions_str = ", ".join(versions)
+            
         print(f"[{hit['project_type'].upper()}] {hit['title']} ({hit['slug']})")
         print(f"Description: {hit['description']}")
-        print(f"Author: {hit['author']}")
-        print(f"Downloads: {hit['downloads']}")
+        print(f"Author: {hit['author']} | Downloads: {hit['downloads']}")
+        print(f"Categories: {categories}")
+        print(f"Versions: {versions_str}")
+        print(f"Client: {hit.get('client_side', 'unknown')} | Server: {hit.get('server_side', 'unknown')}")
         print("-" * 60)
 
 def download_project(slugs, version=None, loader=None):
@@ -93,6 +102,9 @@ def download_project(slugs, version=None, loader=None):
         download_url = file['url']
         filename = file['filename']
         
+        game_versions = latest_version.get('game_versions', [])
+        v_loaders = latest_version.get('loaders', [])
+        print(f"Selected version: {latest_version['name']} (Versions: {', '.join(game_versions)} | Loaders: {', '.join(v_loaders)})")
         print(f"Downloading {filename}...")
         
         try:
