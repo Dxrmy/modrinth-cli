@@ -7,16 +7,23 @@ from urllib.error import URLError, HTTPError
 import hashlib
 import os
 import time
+import zipfile
 
 BASE_URL = "https://api.modrinth.com/v2"
 
-def _request(endpoint, params=None):
+def _request(endpoint, params=None, is_post=False, post_data=None):
     url = f"{BASE_URL}{endpoint}"
     if params:
         query_string = urllib.parse.urlencode(params, doseq=True)
         url = f"{url}?{query_string}"
     
-    req = urllib.request.Request(url, headers={'User-Agent': 'modrinth-cli (github.com/Dxrmy/modrinth-cli)'})
+    headers = {'User-Agent': 'modrinth-cli (github.com/Dxrmy/modrinth-cli)'}
+    if is_post and post_data:
+        headers['Content-Type'] = 'application/json'
+        data_bytes = json.dumps(post_data).encode('utf-8')
+        req = urllib.request.Request(url, data=data_bytes, headers=headers)
+    else:
+        req = urllib.request.Request(url, headers=headers)
     
     while True:
         try:
@@ -37,14 +44,17 @@ def _request(endpoint, params=None):
             print(f"URL Error: {e.reason}")
             sys.exit(1)
 
-def check_file_hash(filepath, expected_hash):
+def get_file_hash(filepath):
     sha512 = hashlib.sha512()
     with open(filepath, 'rb') as f:
         while chunk := f.read(8192):
             sha512.update(chunk)
-    return sha512.hexdigest() == expected_hash
+    return sha512.hexdigest()
 
-def download_file(url, dest_dir, filename, expected_hash=None):
+def check_file_hash(filepath, expected_hash):
+    return get_file_hash(filepath) == expected_hash
+
+def download_file(url, dest_dir, filename, expected_hash=None, silent=False):
     if dest_dir:
         os.makedirs(dest_dir, exist_ok=True)
         filepath = os.path.join(dest_dir, filename)
@@ -53,16 +63,16 @@ def download_file(url, dest_dir, filename, expected_hash=None):
 
     if os.path.exists(filepath):
         if expected_hash and check_file_hash(filepath, expected_hash):
-            print(f"File {filename} already exists and matches hash. Skipping download.")
+            if not silent: print(f"File {filename} already exists and matches hash. Skipping download.")
             return filepath
         else:
-            print(f"File {filename} already exists but hash differs. Overwriting...")
+            if not silent: print(f"File {filename} already exists but hash differs. Overwriting...")
 
-    print(f"Downloading {filename}...")
+    if not silent: print(f"Downloading {filename}...")
     try:
         urllib.request.urlretrieve(url, filepath)
     except Exception as e:
-        print(f"Failed to download {filename}: {e}\n")
+        if not silent: print(f"Failed to download {filename}: {e}\n")
         return None
     
     if expected_hash:
@@ -70,10 +80,8 @@ def download_file(url, dest_dir, filename, expected_hash=None):
             print(f"ERROR: Hash mismatch for {filename}! The file might be corrupted.")
             os.remove(filepath)
             return None
-        else:
-            print(f"Hash verified successfully.")
             
-    print(f"Successfully saved to {filepath}\n")
+    if not silent: print(f"Successfully saved to {filepath}\n")
     return filepath
 
 def get_primary_file(files):
@@ -161,8 +169,15 @@ def search_projects(query, project_type, game_versions, loaders, categories, lim
         print(f"Client: {hit.get('client_side', 'unknown')} | Server: {hit.get('server_side', 'unknown')}")
         print("-" * 60)
 
-def download_project(slugs, dest_dir=None, version=None, loader=None):
+def download_project(slugs, dest_dir=None, version=None, loader=None, auto_resolve=False, _resolved_set=None):
+    if _resolved_set is None:
+        _resolved_set = set()
+
     for slug in slugs:
+        if slug in _resolved_set:
+            continue
+        _resolved_set.add(slug)
+        
         print(f"Fetching versions for {slug}...")
         params = {}
         if loader:
@@ -192,12 +207,18 @@ def download_project(slugs, dest_dir=None, version=None, loader=None):
         
         if filename.endswith('.mrpack'):
             print(f"NOTICE: You downloaded a Modpack format (.mrpack). You cannot put this directly in your mods folder.")
-            print(f"        Please import it using a compatible launcher like Prism Launcher or ATLauncher.")
+            print(f"        Please import it using a compatible launcher like Prism Launcher, OR use 'modrinth.py unpack {filename}'")
             
         dependencies = latest_version.get('dependencies', [])
         required = [d['project_id'] for d in dependencies if d.get('dependency_type') == 'required']
+        
         if required:
-            print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
+            if auto_resolve:
+                print(f"Auto-resolving dependencies for {slug}...")
+                download_project(required, dest_dir, version, loader, auto_resolve, _resolved_set)
+            else:
+                print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
+                print(f"         (Tip: use --auto-resolve to download them automatically)")
             
         download_file(download_url, dest_dir, filename, file_hash)
 
@@ -224,7 +245,7 @@ def list_versions(slug, version=None, loader=None):
         filename = file['filename'] if file else "Unknown"
         print(f"{vid:<20} | {name:<40} | {filename}")
 
-def download_version(version_id, dest_dir=None):
+def download_version(version_id, dest_dir=None, auto_resolve=False):
     print(f"Fetching version info for {version_id}...")
     v = _request(f'/version/{version_id}')
     file = get_primary_file(v.get('files', []))
@@ -238,19 +259,136 @@ def download_version(version_id, dest_dir=None):
     
     if filename.endswith('.mrpack'):
         print(f"NOTICE: You downloaded a Modpack format (.mrpack). You cannot put this directly in your mods folder.")
-        print(f"        Please import it using a compatible launcher like Prism Launcher or ATLauncher.")
         
     dependencies = v.get('dependencies', [])
     required = [d['project_id'] for d in dependencies if d.get('dependency_type') == 'required']
     if required:
-        print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
+        if auto_resolve:
+            print(f"Auto-resolving dependencies...")
+            game_versions = v.get('game_versions', [])
+            loaders = v.get('loaders', [])
+            gv = game_versions[0] if game_versions else None
+            ld = loaders[0] if loaders else None
+            download_project(required, dest_dir, gv, ld, auto_resolve=True)
+        else:
+            print(f"WARNING: This version requires additional dependencies (Project IDs): {', '.join(required)}")
         
     download_file(download_url, dest_dir, filename, file_hash)
+
+def unpack_mrpack(filepath, dest_dir):
+    if not os.path.exists(filepath):
+        print(f"Error: {filepath} not found.")
+        return
+        
+    if not dest_dir: 
+        dest_dir = "."
+    os.makedirs(dest_dir, exist_ok=True)
+    
+    try:
+        with zipfile.ZipFile(filepath, 'r') as z:
+            if 'modrinth.index.json' not in z.namelist():
+                print(f"Error: {filepath} is not a valid .mrpack file (missing modrinth.index.json)")
+                return
+                
+            with z.open('modrinth.index.json') as f:
+                index = json.load(f)
+                
+            print(f"Unpacking Modpack: {index.get('name')} (Version {index.get('versionId')})")
+            
+            files = index.get('files', [])
+            failed = []
+            for file_info in files:
+                downloads = file_info.get('downloads', [])
+                if not downloads:
+                    failed.append(file_info['path'])
+                    continue
+                    
+                url = downloads[0]
+                filename = os.path.basename(file_info['path'])
+                # .mrpack standard specifies 'path' like 'mods/sodium.jar'
+                file_dest = os.path.join(dest_dir, os.path.dirname(file_info['path']))
+                expected_hash = file_info.get('hashes', {}).get('sha512')
+                
+                print(f"Downloading pack file: {filename}...")
+                download_file(url, file_dest, filename, expected_hash, silent=True)
+                
+            # Extract overrides (e.g. config files)
+            print("Extracting overrides and configs...")
+            for member in z.namelist():
+                if member.startswith('overrides/') and not member.endswith('/'):
+                    target = os.path.join(dest_dir, os.path.relpath(member, 'overrides'))
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with open(target, 'wb') as outfile:
+                        outfile.write(z.read(member))
+                        
+            if failed:
+                print("\nNOTICE: The following files could not be downloaded automatically (missing URLs, likely external):")
+                for f in failed:
+                    print(f" - {f}")
+            print("\nModpack successfully unpacked!")
+            
+    except zipfile.BadZipFile:
+        print(f"Error: {filepath} is not a valid zip archive.")
+
+def update_mods(directory):
+    if not os.path.isdir(directory):
+        print(f"Error: Directory {directory} does not exist.")
+        return
+        
+    print(f"Scanning {directory} for mods...")
+    hashes = []
+    file_map = {}
+    for filename in os.listdir(directory):
+        if filename.endswith('.jar'):
+            filepath = os.path.join(directory, filename)
+            sha512 = get_file_hash(filepath)
+            hashes.append(sha512)
+            file_map[sha512] = filepath
+            
+    if not hashes:
+        print("No .jar files found.")
+        return
+        
+    print(f"Found {len(hashes)} .jar files. Checking for updates via Modrinth API...")
+    post_data = {"hashes": hashes, "algorithm": "sha512"}
+    try:
+        versions_data = _request('/version_files', is_post=True, post_data=post_data)
+    except Exception as e:
+        print(f"Error identifying files: {e}")
+        return
+        
+    print("-" * 60)
+    for h, v in versions_data.items():
+        filepath = file_map[h]
+        project_id = v['project_id']
+        current_version_id = v['id']
+        
+        loaders = v.get('loaders', [])
+        game_versions = v.get('game_versions', [])
+        
+        print(f"[{os.path.basename(filepath)}] (Identified as {v['name']})")
+        
+        params = {}
+        if loaders: params['loaders'] = json.dumps([loaders[0]])
+        if game_versions: params['game_versions'] = json.dumps([game_versions[0]])
+        
+        project_versions = _request(f'/project/{project_id}/version', params)
+        if not project_versions: 
+            continue
+            
+        latest = project_versions[0]
+        if latest['id'] != current_version_id:
+            print(f"  -> UPDATE AVAILABLE: {latest['name']}!")
+            # Note: We just list the update for now. 
+            # The user can use download-version {latest['id']} to grab it.
+        else:
+            print(f"  -> Up to date.")
 
 def main():
     parser = argparse.ArgumentParser(
         description="Modrinth CLI - A feature-rich command-line interface for interacting with the Modrinth API.",
-        epilog="Use 'modrinth.py <command> -h' for more information on a specific command."
+        epilog="Use 'modrinth.py <command> -h' for more information on a specific command. "
+               "You can also use ENV vars MODRINTH_VERSION, MODRINTH_LOADER, MODRINTH_DEST."
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Available Commands")
@@ -268,7 +406,6 @@ def main():
     # Info command
     info_parser = subparsers.add_parser("info", help="Get detailed information about a specific project")
     info_parser.add_argument("slug", help="Project slug or ID")
-
     
     # Download command
     download_parser = subparsers.add_parser("download", help="Download projects")
@@ -276,6 +413,7 @@ def main():
     download_parser.add_argument("-v", "--version", help="Specific game version to download for")
     download_parser.add_argument("-l", "--loader", help="Specific loader to download for")
     download_parser.add_argument("-d", "--dest", help="Destination directory to save the file to")
+    download_parser.add_argument("-R", "--auto-resolve", action="store_true", help="Automatically resolve and download required dependencies")
     
     # Filters command
     filters_parser = subparsers.add_parser("filters", help="List available filters")
@@ -289,21 +427,48 @@ def main():
 
     # Download-version command
     dl_ver_parser = subparsers.add_parser("download-version", help="Download a specific version by its ID")
-    dl_ver_parser.add_argument("id", help="Version ID (from the 'versions' command)")
+    dl_ver_parser.add_argument("id", help="Version ID")
     dl_ver_parser.add_argument("-d", "--dest", help="Destination directory to save the file to")
+    dl_ver_parser.add_argument("-R", "--auto-resolve", action="store_true", help="Automatically resolve and download required dependencies")
     
+    # Unpack command
+    unpack_parser = subparsers.add_parser("unpack", help="Unpack a .mrpack Modpack archive natively")
+    unpack_parser.add_argument("filepath", help="Path to the .mrpack file")
+    unpack_parser.add_argument("-d", "--dest", help="Destination directory to extract the modpack to")
+    
+    # Update command
+    update_parser = subparsers.add_parser("update", help="Check a directory for mod updates")
+    update_parser.add_argument("-d", "--dir", default=".", help="Directory containing .jar mods to check")
+
     args = parser.parse_args()
     
+    # Fallback to Environment Variables
+    env_version = os.environ.get("MODRINTH_VERSION")
+    env_loader = os.environ.get("MODRINTH_LOADER")
+    env_dest = os.environ.get("MODRINTH_DEST")
+    
+    if hasattr(args, 'version') and args.version is None and env_version:
+        # search uses list, download uses string
+        args.version = [env_version] if getattr(args, 'command', '') == 'search' else env_version
+    if hasattr(args, 'loader') and args.loader is None and env_loader:
+        args.loader = [env_loader] if getattr(args, 'command', '') == 'search' else env_loader
+    if hasattr(args, 'dest') and args.dest is None and env_dest:
+        args.dest = env_dest
+
     if args.command == "search":
         search_projects(args.query, args.type, args.version, args.loader, args.category, args.limit, args.offset)
     elif args.command == "info":
         project_info(args.slug)
     elif args.command == "download":
-        download_project(args.slugs, args.dest, args.version, args.loader)
+        download_project(args.slugs, args.dest, args.version, args.loader, args.auto_resolve)
     elif args.command == "versions":
         list_versions(args.slug, args.version, args.loader)
     elif args.command == "download-version":
-        download_version(args.id, args.dest)
+        download_version(args.id, args.dest, args.auto_resolve)
+    elif args.command == "unpack":
+        unpack_mrpack(args.filepath, args.dest)
+    elif args.command == "update":
+        update_mods(args.dir)
     elif args.command == "filters":
         display_filters(args.type)
     else:
