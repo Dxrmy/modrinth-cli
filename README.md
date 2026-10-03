@@ -1,6 +1,6 @@
 # Modrinth CLI
 
-A powerful, ultra-fast, and feature-complete command-line interface for managing Minecraft mods, resource packs, shaders, and modpacks.
+A command-line interface for managing Minecraft mods, resource packs, shaders, and modpacks.
 
 ## Features
 
@@ -24,10 +24,10 @@ A powerful, ultra-fast, and feature-complete command-line interface for managing
 
 ## Automation & Scripting Features
 
-Modrinth CLI was engineered to integrate into automated pipelines and shell scripts:
-- **Machine-Readable JSON (`--json`)**: Add `--json` to any command (e.g. `search`, `info`, `inspect`, `changelog`, `scan`, `cache`) for clean JSON output.
-- **Standard Exit Codes**: Exits with status `0` on success and `1` on failure.
-- **Zero-Dependency Architecture**: Runs with standard Python libraries (`urllib`, `hashlib`, `json`, `zipfile`), requiring no external dependencies or toolchains.
+Notes for scripting:
+- `--json` prints machine-readable JSON on `stdout`.
+- Exit code is `0` on success and `1` on failure.
+- Uses only standard Python libraries (`urllib`, `hashlib`, `json`, `zipfile`).
 
 ## Installation
 
