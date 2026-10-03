@@ -54,9 +54,6 @@ KNOWN_ALIASES = {
 }
 
 
-# ==============================================================================
-# CONFIGURATION & DISK CACHE
-# ==============================================================================
 
 def load_config() -> Dict[str, Any]:
     if os.path.exists(CONFIG_FILE):
@@ -151,9 +148,6 @@ class CacheManager:
 CACHE = CacheManager()
 
 
-# ==============================================================================
-# HTTP & API CLIENT
-# ==============================================================================
 
 def _request(endpoint: str, params: Optional[Dict[str, Any]] = None, is_post: bool = False,
              post_data: Optional[Any] = None, headers: Optional[Dict[str, str]] = None) -> Any:
@@ -222,7 +216,6 @@ def download_file(url: str, dest_dir: str, filename: str, expected_sha512: Optio
     os.makedirs(dest_dir, exist_ok=True)
     filepath = os.path.join(dest_dir, filename)
 
-    # 1. Check if already present on disk
     if os.path.exists(filepath):
         if expected_sha512 and get_file_hash(filepath, 'sha512') == expected_sha512:
             if not silent and not JSON_OUTPUT:
@@ -234,7 +227,6 @@ def download_file(url: str, dest_dir: str, filename: str, expected_sha512: Optio
                 print(f"File '{filename}' already exists and verified (SHA1). Skipping.")
             return filepath
 
-    # 2. Check local disk cache
     if expected_sha512:
         cached_file = CACHE.get(expected_sha512)
         if cached_file:
@@ -246,7 +238,6 @@ def download_file(url: str, dest_dir: str, filename: str, expected_sha512: Optio
             except Exception:
                 pass
 
-    # 3. Stream from network
     if not silent and not JSON_OUTPUT:
         print(f"Downloading {filename}...")
 
@@ -292,9 +283,7 @@ def get_primary_file(files: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return files[0] if files else None
 
 
-# ==============================================================================
 # SEARCH, FALLBACKS & SUGGESTIONS
-# ==============================================================================
 
 def suggest_mods(query: str):
     q_clean = query.replace('-', ' ').replace('_', ' ').replace("'", "")
@@ -387,9 +376,7 @@ def search_projects(query: str, project_type: Optional[str], game_versions: Opti
         print("-" * 75)
 
 
-# ==============================================================================
 # PROJECT INFO, INSPECT & CHANGELOGS
-# ==============================================================================
 
 def project_info(slug: str, get_property: Optional[str] = None):
     p = _request(f'/project/{slug}')
@@ -492,9 +479,6 @@ def inspect_target(target_type: str, identifier: str):
     print(json.dumps(data, indent=2))
 
 
-# ==============================================================================
-# DOWNLOAD & DEPENDENCY RESOLUTION
-# ==============================================================================
 
 def download_project(slugs: List[str], dest_dir: Optional[str] = None, version: Optional[str] = None,
                      loader: Optional[str] = None, auto_resolve: bool = False, _resolved_set: Optional[Set[str]] = None) -> bool:
@@ -596,9 +580,6 @@ def download_by_version(version_id: str, dest_dir: Optional[str] = None, auto_re
     download_file(p_file['url'], routed_dest, p_file['filename'], p_file.get('hashes', {}).get('sha512'), p_file.get('hashes', {}).get('sha1'))
 
 
-# ==============================================================================
-# IN-PLACE UPGRADES & BATCH SCAN
-# ==============================================================================
 
 def scan_directory(directory: str) -> Dict[str, Any]:
     if not os.path.isdir(directory):
@@ -737,9 +718,7 @@ def upgrade_all_in_directory(directory: str, game_version: Optional[str] = None,
     print(f"\nUpgrade process completed ({upgraded} files updated).")
 
 
-# ==============================================================================
 # DECLARATIVE MODPACK SYSTEM (pack.toml & .mrpack EXPORT)
-# ==============================================================================
 
 def parse_simple_toml(text: str) -> Dict[str, Any]:
     """Zero-dependency robust TOML parser."""
@@ -1025,9 +1004,6 @@ class PackManager:
         print(f"Successfully exported modpack to: {os.path.abspath(out_name)} ({len(index_files)} declared mods)")
 
 
-# ==============================================================================
-# UNPACK MRPACK
-# ==============================================================================
 
 def unpack_mrpack(filepath: str, dest_dir: Optional[str] = None):
     if not os.path.exists(filepath):
@@ -1074,9 +1050,6 @@ def unpack_mrpack(filepath: str, dest_dir: Optional[str] = None):
         print(f"Failed to unpack .mrpack: {e}", file=sys.stderr)
 
 
-# ==============================================================================
-# MAIN CLI ENTRYPOINT
-# ==============================================================================
 
 def main():
     global JSON_OUTPUT, USE_CACHE
